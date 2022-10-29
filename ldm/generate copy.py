@@ -148,7 +148,7 @@ class Generate:
             model                 = 'stable-diffusion-1.4',
             conf                  = 'configs/models.yaml',
             embedding_path        = None,
-            sampler_name          = 'k_euler_a',
+            sampler_name          = 'k_lms',
             ddim_eta              = 0.0,  # deterministic
             full_precision        = False,
             precision             = 'auto',
@@ -162,16 +162,12 @@ class Generate:
     ):
         mconfig             = OmegaConf.load(conf)
         self.model_name     = model
-        self.height         = 768
-        self.width          = 512
+        self.height         = None
+        self.width          = None
         self.model_cache    = None
         self.iterations     = 1
-        self.steps          = 21
-        self.cfg_scale      = 10 
-        self.rotate_steps   = 0 
-        self.randomize   = False 
-        self.rotate_cfg   = 0 
-        self.vary   = 0 
+        self.steps          = 50
+        self.cfg_scale      = 7.5
         self.sampler_name   = sampler_name
         self.ddim_eta       = 0.0    # same seed always produces same image
         self.precision      = precision
@@ -181,7 +177,7 @@ class Generate:
         self.embedding_path = embedding_path
         self.model          = None     # empty for now
         self.model_hash     = None
-        self.sampler        = 'k_euler_a'
+        self.sampler        = None
         self.device         = None
         self.session_peakmem = None
         self.generators     = {}
@@ -228,12 +224,8 @@ class Generate:
         pngwriter = PngWriter(outdir)
         prefix    = pngwriter.unique_prefix()
         outputs   = []
-        print(results)
-        for image, seed, iter in results:
-            if iter > 0:
-                name = f'{prefix}_{iter}.{seed}.png'
-            else:
-                name = f'{prefix}.{seed}.png'
+        for image, seed in results:
+            name = f'{prefix}.{seed}.png'
             path = pngwriter.save_image_and_prompt_to_png(
                 image, dream_prompt=f'{prompt} -S{seed}', name=name)
             outputs.append([path, seed])
@@ -255,20 +247,16 @@ class Generate:
             # these are common
             prompt,
             iterations       = None,
-            steps            = 21,
+            steps            = None,
             seed             = None,
-            cfg_scale        = 10,
-            rotate_steps     = None,
-            rotate_cfg     = None,
-            vary     = None,
-            randomize     = False,
+            cfg_scale        = None,
             ddim_eta         = None,
             skip_normalize   = False,
             image_callback   = None,
             step_callback    = None,
-            width            = 512,
-            height           = 768,
-            sampler_name     = 'k_euler_a',
+            width            = None,
+            height           = None,
+            sampler_name     = None,
             seamless         = False,
             log_tokenization = False,
             with_variations  = None,
@@ -340,14 +328,10 @@ class Generate:
         # TODO: convert this into a getattr() loop
         steps = steps or self.steps
         width = width or self.width
-        height = height or 768
+        height = height or self.height
         seamless = seamless or self.seamless
         hires_fix = hires_fix or self.hires_fix
         cfg_scale = cfg_scale or self.cfg_scale
-        rotate_steps = rotate_steps or self.rotate_steps
-        rotate_cfg = rotate_cfg or self.rotate_cfg
-        vary = vary or self.vary
-        randomize = randomize or self.randomize
         ddim_eta = ddim_eta or self.ddim_eta
         iterations = iterations or self.iterations
         strength = strength or self.strength
@@ -446,10 +430,6 @@ class Generate:
                 sampler=self.sampler,
                 steps=steps,
                 cfg_scale=cfg_scale,
-                rotate_steps=rotate_steps,
-                randomize=randomize,
-                rotate_cfg=rotate_cfg,
-                vary=vary,
                 conditioning=(uc, c),
                 ddim_eta=ddim_eta,
                 image_callback=image_callback,  # called after the final image is generated
@@ -529,7 +509,6 @@ class Generate:
             opt                 = None,
             ):
         # retrieve the seed from the image;
-        print(image_path)
         seed   = None
         image_metadata = None
         prompt = None
@@ -569,7 +548,7 @@ class Generate:
                 facetool = 'gfpgan'   # but won't be run
                 facetool_strength = 0
             return self.upscale_and_reconstruct(
-                [[image,seed,0]],
+                [[image,seed]],
                 facetool = facetool,
                 strength = facetool_strength,
                 codeformer_fidelity = codeformer_fidelity,
@@ -605,10 +584,6 @@ class Generate:
                 sampler     = self.sampler,
                 steps       = opt.steps,
                 cfg_scale   = opt.cfg_scale,
-                rotate_steps   = opt.rotate_steps,
-                rotate_cfg   = opt.rotate_cfg,
-                vary   = opt.vary,
-                randomize   = opt.randomize,
                 ddim_eta    = self.ddim_eta,
                 conditioning= (uc, c),
                 init_img    = image_path,  # not the Image! (sigh)
@@ -788,7 +763,7 @@ class Generate:
     ):
             
         for r in image_list:
-            image, seed, step = r
+            image, seed = r
             try:
                 if strength > 0:
                     if self.gfpgan is not None or self.codeformer is not None:
@@ -819,7 +794,7 @@ class Generate:
                 )
 
             if image_callback is not None:
-                image_callback(image, seed, upscaled=True, use_prefix=prefix, step=step)
+                image_callback(image, seed, upscaled=True, use_prefix=prefix)
             else:
                 r[0] = image
 

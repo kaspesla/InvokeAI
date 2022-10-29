@@ -225,6 +225,8 @@ def main_loop(gen, opt, infile):
                 os.makedirs(opt.outdir)
             current_outdir = opt.outdir
 
+        opt.prompt = opt.prompt + opt.exclude
+
         # write out the history at this point
         if operation == 'postprocess':
             completer.add_history(f'!fix {command}')
@@ -241,7 +243,7 @@ def main_loop(gen, opt, infile):
             prefix = file_writer.unique_prefix()
             step_callback = make_step_callback(gen, opt, prefix) if opt.save_intermediates > 0 else None
 
-            def image_writer(image, seed, upscaled=False, first_seed=None, use_prefix=None):
+            def image_writer(image, seed, upscaled=False, first_seed=None, use_prefix=None, step=0):
                 # note the seed is the seed of the current image
                 # the first_seed is the original seed that noise is added to
                 # when the -v switch is used to generate variations
@@ -262,7 +264,8 @@ def main_loop(gen, opt, infile):
                         operation,
                         prior_variations,
                         postprocessed,
-                        first_seed
+                        first_seed,
+                        step
                     )
                     path = file_writer.save_image_and_prompt_to_png(
                         image           = image,
@@ -537,18 +540,21 @@ def do_postprocess (gen, opt, callback):
 def add_postprocessing_to_metadata(opt,original_file,new_file,tool,command):
     original_file = original_file if os.path.exists(original_file) else os.path.join(opt.outdir,original_file)
     new_file       = new_file     if os.path.exists(new_file)      else os.path.join(opt.outdir,new_file)
-    meta = retrieve_metadata(original_file)['sd-metadata']
-    img_data = meta['image']
-    pp = img_data.get('postprocessing',[]) or []
-    pp.append(
-        {
-            'tool':tool,
-            'dream_command':command,
-        }
-    )
-    meta['image']['postprocessing'] = pp
-    write_metadata(new_file,meta)
-    
+    try:
+        meta = retrieve_metadata(original_file)['sd-metadata']
+        img_data = meta['image']
+        pp = img_data.get('postprocessing',[]) or []
+        pp.append(
+            {
+                'tool':tool,
+                'dream_command':command,
+            }
+        )
+        meta['image']['postprocessing'] = pp
+        write_metadata(new_file,meta)
+    except:
+        pass
+
 def prepare_image_metadata(
         opt,
         prefix,
@@ -556,13 +562,14 @@ def prepare_image_metadata(
         operation='generate',
         prior_variations=[],
         postprocessed=False,
-        first_seed=None
+        first_seed=None,
+        step = 0
 ):
 
     if postprocessed and opt.save_original:
         filename = choose_postprocess_name(opt,prefix,seed)
     else:
-        filename = f'{prefix}.{seed}.png'
+        filename = f'{prefix}_{step}.{seed}.png'
 
     if opt.variation_amount > 0:
         first_seed             = first_seed or seed

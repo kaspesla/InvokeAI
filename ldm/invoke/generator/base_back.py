@@ -12,7 +12,6 @@ from einops import rearrange, repeat
 from pytorch_lightning import seed_everything
 from ldm.invoke.devices import choose_autocast
 from ldm.util import rand_perlin_2d
-import time
 
 downsampling = 8
 
@@ -42,49 +41,26 @@ class Generator():
         self.with_variations  = with_variations
 
     def generate(self,prompt,init_image,width,height,iterations=1,seed=None,
-                 image_callback=None, step_callback=None, threshold=0.0, perlin=0.0, rotate_steps=0, rotate_cfg = 0,
+                 image_callback=None, step_callback=None, threshold=0.0, perlin=0.0,
                  **kwargs):
-        #print(kwargs)
         scope = choose_autocast(self.precision)
+        make_image          = self.get_make_image(
+            prompt,
+            init_image    = init_image,
+            width         = width,
+            height        = height,
+            step_callback = step_callback,
+            threshold     = threshold,
+            perlin        = perlin,
+            **kwargs
+        )
+
         results             = []
-        noseed = True if seed is None else False
         seed                = seed if seed is not None else self.new_seed()
         first_seed          = seed
         seed, initial_noise = self.generate_initial_noise(seed, width, height)
         with scope(self.model.device.type), self.model.ema_scope():
-            this_step = kwargs['steps'] - int((iterations / 2))           
-            orig_step = kwargs['steps']
-            orig_cfg = kwargs['cfg_scale']
-            vary = kwargs['vary']
-            cfg_offset = 0.0
-            randseed = time.time() 
             for n in trange(iterations, desc='Generating'):
-                if rotate_steps != 0:
-                    kwargs['steps'] = this_step
-                cfg_offset = cfg_offset + float(rotate_cfg) 
-                if rotate_cfg != 0:
-                    kwargs['cfg_scale'] = orig_cfg + cfg_offset
-                    this_step = cfg_offset+orig_cfg
-                if kwargs['randomize']:
-                    stat =random.getstate()
-                    random.seed(randseed);
-                    kwargs['steps'] = random.randrange(orig_step-5, orig_step+5)
-                    cfgs = random.uniform(orig_cfg-3.0, orig_cfg+3.0)
-                    kwargs['cfg_scale'] = round(cfgs, 2)
-                    randseed = cfgs
-                    this_step = str(kwargs['cfg_scale']) + " " + str(kwargs['steps'])
-                    random.setstate(stat)
-                make_image          = self.get_make_image(
-                    prompt,
-                    init_image    = init_image,
-                    width         = width,
-                    height        = height,
-                    step_callback = step_callback,
-                    threshold     = threshold,
-                    perlin        = perlin,
-                    **kwargs
-                )
-
                 x_T = None
                 if self.variation_amount > 0:
                     seed_everything(seed)
@@ -101,20 +77,10 @@ class Generator():
                         pass
 
                 image = make_image(x_T)
-                results.append([image, seed, this_step])
+                results.append([image, seed])
                 if image_callback is not None:
-                    image_callback(image, seed, first_seed=first_seed, step=this_step)
-                if rotate_steps >  0:
-                    this_step = this_step + 1
-                    if this_step == orig_step:
-                        this_step = this_step + 1
-                    kwargs['steps'] = this_step 
-                elif rotate_cfg > 0:
-                    pass 
-                elif (kwargs['randomize'] and not noseed) or (vary > 0 and n % vary != vary-1):
-                    pass 
-                else:
-                    seed = self.new_seed()
+                    image_callback(image, seed, first_seed=first_seed)
+                seed = self.new_seed()
         return results
     
     def sample_to_image(self,samples):

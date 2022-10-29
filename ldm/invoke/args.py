@@ -395,7 +395,7 @@ class Args(object):
             choices=SAMPLER_CHOICES,
             metavar='SAMPLER_NAME',
             help=f'Switch to a different sampler. Supported samplers: {", ".join(SAMPLER_CHOICES)}',
-            default='k_lms',
+            default='k_euler_a',
         )
         model_group.add_argument(
             '-F',
@@ -556,7 +556,7 @@ class Args(object):
             '-s',
             '--steps',
             type=int,
-            default=50,
+            default=21,
             help='Number of steps'
         )
         render_group.add_argument(
@@ -565,6 +565,34 @@ class Args(object):
             type=int,
             default=None,
             help='Image seed; a +ve integer, or use -1 for the previous seed, -2 for the one before that, etc',
+        )
+        render_group.add_argument(
+            '-E',
+            '--vary',
+            type=int,
+            default=None,
+            help='create this many variations on each seed',
+        )
+        render_group.add_argument(
+            '-e',
+            '--exclude',
+            type=str,
+            default=" [extra legs, extra arms, extra fingers, poorly drawn hands, poorly drawn feet, disfigured, deformed, mutated]",
+            help='default exclude string',
+        )
+        render_group.add_argument(
+            '-K',
+            '--rotate_cfg',
+            type=float,
+            default=None,
+            help='rotate through different CFG values to create variations',
+        )
+        render_group.add_argument(
+            '-Q',
+            '--rotate_steps',
+            type=int,
+            default=0,
+            help='rotate through different steps values to create variations',
         )
         render_group.add_argument(
             '-n',
@@ -583,12 +611,13 @@ class Args(object):
             '-H',
             '--height',
             type=int,
+            default=768,
             help='Image height, multiple of 64',
         )
         render_group.add_argument(
             '-C',
             '--cfg_scale',
-            default=7.5,
+            default=10,
             type=float,
             help='Classifier free guidance (CFG) scale - higher numbers cause generator to "try" harder.',
         )
@@ -603,6 +632,12 @@ class Args(object):
             default=0.0,
             type=float,
             help='Perlin noise scale (0.0 - 1.0) - add perlin noise to the initialization instead of the usual gaussian noise.',
+        )
+        render_group.add_argument(
+            '--randomize',
+            '-R',
+            action='store_true',
+            help='randomize cfg and steps'
         )
         render_group.add_argument(
             '--grid',
