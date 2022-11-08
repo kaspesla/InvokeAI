@@ -55,7 +55,9 @@ class Generator():
             this_step = kwargs['steps'] - int((iterations / 2))           
             orig_step = kwargs['steps']
             orig_cfg = kwargs['cfg_scale']
-            vary = kwargs['vary']
+            vary = 0
+            if 'vary' in kwargs:
+                vary = kwargs['vary']
             cfg_offset = 0.0
             randseed = time.time() 
             for n in trange(iterations, desc='Generating'):
@@ -65,7 +67,7 @@ class Generator():
                 if rotate_cfg != 0:
                     kwargs['cfg_scale'] = orig_cfg + cfg_offset
                     this_step = cfg_offset+orig_cfg
-                if kwargs['randomize']:
+                if 'randomize' in kwargs and kwargs['randomize']:
                     stat =random.getstate()
                     random.seed(randseed);
                     kwargs['steps'] = random.randrange(orig_step-5, orig_step+5)
@@ -111,7 +113,7 @@ class Generator():
                     kwargs['steps'] = this_step 
                 elif rotate_cfg > 0:
                     pass 
-                elif (kwargs['randomize'] and not noseed) or (vary > 0 and n % vary != vary-1):
+                elif ('randomize' in kwargs and kwargs['randomize'] and not noseed) or (vary > 0 and n % vary != vary-1):
                     pass 
                 else:
                     seed = self.new_seed()

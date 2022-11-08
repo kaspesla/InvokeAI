@@ -225,7 +225,8 @@ def main_loop(gen, opt, infile):
                 os.makedirs(opt.outdir)
             current_outdir = opt.outdir
 
-        opt.prompt = opt.prompt + opt.exclude
+        if operation != 'postprocess':
+            opt.prompt = opt.prompt + opt.exclude
 
         # write out the history at this point
         if operation == 'postprocess':
