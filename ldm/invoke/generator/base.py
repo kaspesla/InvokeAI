@@ -6,8 +6,9 @@ import torch
 import numpy as  np
 import random
 import os
+import traceback
 from tqdm import tqdm, trange
-from PIL               import Image
+from PIL import Image, ImageFilter
 from einops import rearrange, repeat
 from pytorch_lightning import seed_everything
 from ldm.invoke.devices import choose_autocast
@@ -15,18 +16,22 @@ from ldm.util import rand_perlin_2d
 import time
 
 downsampling = 8
+CAUTION_IMG = 'assets/caution.png'
 
 class Generator():
     def __init__(self, model, precision):
-        self.model               = model
-        self.precision           = precision
-        self.seed                = None
-        self.latent_channels     = model.channels
+        self.model = model
+        self.precision = precision
+        self.seed = None
+        self.latent_channels = model.channels
         self.downsampling_factor = downsampling   # BUG: should come from model or config
-        self.perlin              = 0.0
-        self.threshold           = 0
-        self.variation_amount    = 0
-        self.with_variations     = []
+        self.safety_checker = None
+        self.perlin = 0.0
+        self.threshold = 0
+        self.variation_amount = 0
+        self.with_variations = []
+        self.use_mps_noise = False
+        self.free_gpu_mem = None
 
     # this is going to be overridden in img2img.py, txt2img.py and inpaint.py
     def get_make_image(self,prompt,**kwargs):
@@ -41,17 +46,20 @@ class Generator():
         self.variation_amount = variation_amount
         self.with_variations  = with_variations
 
-    def generate(self,prompt,init_image,width,height,iterations=1,seed=None,
-                 image_callback=None, step_callback=None, threshold=0.0, perlin=0.0, rotate_steps=0, rotate_cfg = 0,
+
+    def generate(self,prompt,init_image,width,height,sampler, iterations=1,seed=None,
+                 image_callback=None, step_callback=None, threshold=0.0, perlin=0.0,
+                                  rotate_steps=0, rotate_cfg = 0, safety_checker:dict=None,
                  **kwargs):
         #print(kwargs)
         scope = choose_autocast(self.precision)
+        self.safety_checker = safety_checker
         results             = []
         noseed = True if seed is None else False
         seed                = seed if seed is not None else self.new_seed()
         first_seed          = seed
         seed, initial_noise = self.generate_initial_noise(seed, width, height)
-        with scope(self.model.device.type), self.model.ema_scope():
+        with scope(self.model.device.type):
             this_step = kwargs['steps'] - int((iterations / 2))           
             orig_step = kwargs['steps']
             orig_cfg = kwargs['cfg_scale']
@@ -78,6 +86,7 @@ class Generator():
                     random.setstate(stat)
                 make_image          = self.get_make_image(
                     prompt,
+                    sampler = sampler,
                     init_image    = init_image,
                     width         = width,
                     height        = height,
@@ -86,7 +95,6 @@ class Generator():
                     perlin        = perlin,
                     **kwargs
                 )
-
                 x_T = None
                 if self.variation_amount > 0:
                     seed_everything(seed)
@@ -100,9 +108,14 @@ class Generator():
                     try:
                         x_T = self.get_noise(width,height)
                     except:
-                        pass
+                        print('** An error occurred while getting initial noise **')
+                        print(traceback.format_exc())
 
                 image = make_image(x_T)
+
+                if self.safety_checker is not None:
+                    image = self.safety_check(image)
+                    
                 results.append([image, seed, this_step])
                 if image_callback is not None:
                     image_callback(image, seed, first_seed=first_seed, step=this_step)
@@ -117,12 +130,13 @@ class Generator():
                     pass 
                 else:
                     seed = self.new_seed()
+
         return results
     
-    def sample_to_image(self,samples):
+    def sample_to_image(self,samples)->Image.Image:
         """
-        Returns a function returning an image derived from the prompt and the initial image
-        Return value depends on the seed at the time you call it
+        Given samples returned from a sampler, converts
+        it into a PIL Image
         """
         x_samples = self.model.decode_first_stage(samples)
         x_samples = torch.clamp((x_samples + 1.0) / 2.0, min=0.0, max=1.0)
@@ -133,6 +147,29 @@ class Generator():
             x_samples[0].cpu().numpy(), 'c h w -> h w c'
         )
         return Image.fromarray(x_sample.astype(np.uint8))
+
+        # write an approximate RGB image from latent samples for a single step to PNG
+
+    def sample_to_lowres_estimated_image(self,samples):
+        # adapted from code by @erucipe and @keturn here:
+        # https://discuss.huggingface.co/t/decoding-latents-to-rgb-without-upscaling/23204/7
+
+        # these numbers were determined empirically by @keturn
+        v1_4_latent_rgb_factors = torch.tensor([
+                    # R        G        B
+                    [ 0.298, 0.207, 0.208],  # L1
+                    [ 0.187, 0.286, 0.173],  # L2
+                    [-0.158, 0.189, 0.264],  # L3
+                    [-0.184, -0.271, -0.473],  # L4
+        ], dtype=samples.dtype, device=samples.device)
+
+        latent_image = samples[0].permute(1, 2, 0) @ v1_4_latent_rgb_factors
+        latents_ubyte = (((latent_image + 1) / 2)
+                         .clamp(0, 1)  # change scale from -1..1 to 0..1
+                         .mul(0xFF)  # to 0..255
+                         .byte()).cpu()
+
+        return Image.fromarray(latents_ubyte.numpy())
 
     def generate_initial_noise(self, seed, width, height):
         initial_noise = None
@@ -204,6 +241,40 @@ class Generator():
             v2 = torch.from_numpy(v2).to(self.model.device)
 
         return v2
+
+    def safety_check(self,image:Image.Image):
+        '''
+        If the CompViz safety checker flags an NSFW image, we
+        blur it out.
+        '''
+        import diffusers
+
+        checker = self.safety_checker['checker']
+        extractor = self.safety_checker['extractor']
+        features = extractor([image], return_tensors="pt")
+        features.to(self.model.device)
+
+        # unfortunately checker requires the numpy version, so we have to convert back
+        x_image = np.array(image).astype(np.float32) / 255.0
+        x_image = x_image[None].transpose(0, 3, 1, 2)
+
+        diffusers.logging.set_verbosity_error()
+        checked_image, has_nsfw_concept = checker(images=x_image, clip_input=features.pixel_values)
+        if has_nsfw_concept[0]:
+            print('** An image with potential non-safe content has been detected. A blurred image will be returned. **')
+            return self.blur(image)
+        else:
+            return image
+
+    def blur(self,input):
+        blurry = input.filter(filter=ImageFilter.GaussianBlur(radius=32))
+        try:
+            caution = Image.open(CAUTION_IMG)
+            caution = caution.resize((caution.width // 2, caution.height //2))
+            blurry.paste(caution,(0,0),caution)
+        except FileNotFoundError:
+            pass
+        return blurry
 
     # this is a handy routine for debugging use. Given a generated sample,
     # convert it into a PNG image and store it at the indicated path
