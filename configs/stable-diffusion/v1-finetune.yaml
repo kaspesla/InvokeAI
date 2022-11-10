@@ -22,7 +22,7 @@ model:
       target: ldm.modules.embedding_manager.EmbeddingManager
       params:
         placeholder_strings: ["*"]
-        initializer_words: ["glen"]
+        initializer_words: ["face", "guy"]
         per_image_tokens: false
         num_vectors_per_token: 1
         progressive_words: False
@@ -100,7 +100,7 @@ lightning:
       target: main.ImageLogger
       params:
         batch_frequency: 500
-        max_images: 8
+        max_images: 1
         increase_log_steps: False
 
   trainer:

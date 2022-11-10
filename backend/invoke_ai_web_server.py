@@ -673,7 +673,7 @@ class InvokeAIWebServer:
                 self.socketio.emit("progressUpdate", progress.to_formatted_dict())
                 eventlet.sleep(0)
 
-            def image_done(image, seed, first_seed):
+            def image_done(image, seed, first_seed, step):
                 if self.canceled.is_set():
                     raise CanceledException
 

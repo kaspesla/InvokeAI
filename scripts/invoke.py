@@ -10,10 +10,14 @@ import warnings
 import time
 import traceback
 import yaml
+import random
+import numpy as  np
 
 from ldm.invoke.prompt_parser import PromptParser
 
 sys.path.append('.')    # corrects a weird problem on Macs
+from tqdm import tqdm, trange
+
 from ldm.invoke.readline import get_completer
 from ldm.invoke.args import Args, metadata_dumps, metadata_from_png, dream_cmd_from_png
 from ldm.invoke.pngwriter import PngWriter, retrieve_metadata, write_metadata
@@ -637,18 +641,20 @@ def do_postprocess (gen, opt, callback):
     opt.save_original  = True # do not overwrite old image!
     opt.last_operation = f'postprocess:{tool}'
     try:
-        gen.apply_postprocessor(
-            image_path      = file_path,
-            tool            = tool,
-            facetool_strength = opt.facetool_strength,
-            codeformer_fidelity = opt.codeformer_fidelity,
-            save_original       = opt.save_original,
-            upscale             = opt.upscale,
-            out_direction       = opt.out_direction,
-            outcrop             = opt.outcrop,
-            callback            = callback,
-            opt                 = opt,
-        )
+        for n in trange(opt.iterations, desc='Generating'):
+            gen.apply_postprocessor(
+                image_path      = file_path,
+                tool            = tool,
+                facetool_strength = opt.facetool_strength,
+                codeformer_fidelity = opt.codeformer_fidelity,
+                save_original       = opt.save_original,
+                upscale             = opt.upscale,
+                out_direction       = opt.out_direction,
+                outcrop             = opt.outcrop,
+                callback            = callback,
+                opt                 = opt,
+            )
+            opt.seed = random.randrange(0, np.iinfo(np.uint32).max)
     except OSError:
         print(traceback.format_exc(), file=sys.stderr)
         print(f'** {file_path}: file could not be read')

@@ -571,12 +571,14 @@ class Generate:
             opt                 = None,
             ):
         # retrieve the seed from the image;
-        print(image_path)
+        print(opt.seed)
         seed   = None
         image_metadata = None
         prompt = None
 
         args   = metadata_from_png(image_path)
+        if opt.seed:
+            args.seed = opt.seed
         seed   = args.seed
         prompt = args.prompt
         print(f'>> retrieved seed {seed} and prompt "{prompt}" from {image_path}')
